@@ -15,6 +15,7 @@ class Config:
     def __init__(self):
         self.openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
         self.anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+        self.alpha_vantage_api_key: Optional[str] = os.getenv("ALPHA_VANTAGE_API_KEY")
         
         self.data_dir = Path(__file__).parent.parent.parent / "data"
         self.output_dir = Path(__file__).parent.parent.parent / "output"
@@ -29,6 +30,7 @@ class Config:
         logger.info("Configuration loaded", 
                    has_openai_key=bool(self.openai_api_key),
                    has_anthropic_key=bool(self.anthropic_api_key),
+                   has_alpha_vantage_key=bool(self.alpha_vantage_api_key),
                    llm_model=self.llm_model)
     
     def validate(self) -> bool:

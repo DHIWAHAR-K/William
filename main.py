@@ -84,8 +84,8 @@ class FundamentalAnalysisSystem:
             results = {
                 'ticker': ticker,
                 'timestamp': datetime.now().isoformat(),
-                'financial_metrics': financial_data['metrics'].dict(),
-                'llm_analysis': llm_analysis.dict(),
+                'financial_metrics': financial_data['metrics'].model_dump(),
+                'llm_analysis': llm_analysis.model_dump(),
                 'data_quality': {
                     'has_financials': bool(financial_data.get('financials') is not None),
                     'has_balance_sheet': bool(financial_data.get('balance_sheet') is not None),

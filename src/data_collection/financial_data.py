@@ -1,10 +1,11 @@
 from typing import Dict, List, Optional, Any
 import pandas as pd
-import yfinance as yf
+import requests
 import structlog
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, validator
 import numpy as np
+import time
 
 logger = structlog.get_logger()
 
@@ -38,14 +39,28 @@ class FinancialMetrics(BaseModel):
 
 
 class FinancialDataCollector:
-    """Collects and processes financial data from various sources."""
+    """Collects and processes financial data using Alpha Vantage API."""
     
     def __init__(self):
         self.cache: Dict[str, Any] = {}
+        self.api_key = self._get_api_key()
+        self.base_url = "https://www.alphavantage.co/query"
+        
+    def _get_api_key(self) -> str:
+        """Get Alpha Vantage API key from config."""
+        from src.utils.config import config
+        api_key = getattr(config, 'alpha_vantage_api_key', None)
+        if not api_key:
+            # Try environment variable
+            import os
+            api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+            if not api_key:
+                raise ValueError("Alpha Vantage API key required. Set ALPHA_VANTAGE_API_KEY in .env file")
+        return api_key
         
     def get_company_data(self, ticker: str) -> Dict[str, Any]:
         """
-        Fetch comprehensive financial data for a company.
+        Fetch comprehensive financial data for a company using Alpha Vantage.
         
         Args:
             ticker: Stock ticker symbol
@@ -53,72 +68,205 @@ class FinancialDataCollector:
         Returns:
             Dictionary containing all financial data
         """
-        logger.info("Fetching financial data", ticker=ticker)
+        logger.info("Fetching financial data from Alpha Vantage", ticker=ticker)
         
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            # Get company overview
+            overview = self._get_company_overview(ticker)
             
-            # Get historical data
-            hist_data = stock.history(period="5y")
+            # Get historical prices
+            historical_prices = self._get_historical_prices(ticker)
             
-            # Get financial statements
-            financials = stock.financials
-            balance_sheet = stock.balance_sheet
-            cash_flow = stock.cashflow
+            # Get income statement
+            income_statement = self._get_income_statement(ticker)
+            
+            # Get balance sheet
+            balance_sheet = self._get_balance_sheet(ticker)
             
             data = {
-                "info": info,
-                "historical_prices": hist_data,
-                "financials": financials,
+                "info": overview,
+                "historical_prices": historical_prices,
+                "financials": income_statement,
                 "balance_sheet": balance_sheet,
-                "cash_flow": cash_flow,
-                "metrics": self._calculate_metrics(info, financials, balance_sheet, cash_flow)
+                "cash_flow": pd.DataFrame(),  # Alpha Vantage cash flow requires separate call
+                "metrics": self._calculate_metrics_from_overview(overview)
             }
             
             self.cache[ticker] = data
-            logger.info("Successfully fetched financial data", ticker=ticker)
+            logger.info("Successfully fetched financial data from Alpha Vantage", ticker=ticker)
             return data
             
         except Exception as e:
             logger.error("Error fetching financial data", ticker=ticker, error=str(e))
             raise
     
-    def _calculate_metrics(self, info: Dict, financials: pd.DataFrame, 
-                          balance_sheet: pd.DataFrame, cash_flow: pd.DataFrame) -> FinancialMetrics:
-        """Calculate standardized financial metrics."""
+    def _get_company_overview(self, ticker: str) -> Dict:
+        """Get company overview from Alpha Vantage."""
+        params = {
+            'function': 'OVERVIEW',
+            'symbol': ticker,
+            'apikey': self.api_key
+        }
+        
+        response = requests.get(self.base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'Error Message' in data:
+            raise ValueError(f"Alpha Vantage API error: {data['Error Message']}")
+        
+        if 'Note' in data:
+            logger.warning("Alpha Vantage rate limit warning", message=data['Note'])
+            time.sleep(12)  # Wait 12 seconds for rate limit
+            return self._get_company_overview(ticker)  # Retry
+        
+        return data
+    
+    def _get_historical_prices(self, ticker: str) -> pd.DataFrame:
+        """Get historical price data from Alpha Vantage."""
+        params = {
+            'function': 'TIME_SERIES_DAILY',
+            'symbol': ticker,
+            'outputsize': 'full',
+            'apikey': self.api_key
+        }
+        
+        response = requests.get(self.base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'Error Message' in data:
+            logger.warning("Could not fetch historical prices", error=data['Error Message'])
+            return pd.DataFrame()
+        
+        if 'Note' in data:
+            logger.warning("Alpha Vantage rate limit warning", message=data['Note'])
+            time.sleep(12)
+            return self._get_historical_prices(ticker)
+        
+        time_series = data.get('Time Series (Daily)', {})
+        if not time_series:
+            return pd.DataFrame()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(time_series).T
+        df.index = pd.to_datetime(df.index)
+        df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        
+        # Convert to numeric
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Sort by date ascending
+        df = df.sort_index()
+        
+        # Limit to last 5 years for performance
+        df = df.last('5Y')
+        
+        return df
+    
+    def _get_income_statement(self, ticker: str) -> pd.DataFrame:
+        """Get income statement from Alpha Vantage."""
+        params = {
+            'function': 'INCOME_STATEMENT',
+            'symbol': ticker,
+            'apikey': self.api_key
+        }
+        
+        response = requests.get(self.base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'Error Message' in data:
+            logger.warning("Could not fetch income statement", error=data['Error Message'])
+            return pd.DataFrame()
+        
+        if 'Note' in data:
+            time.sleep(12)
+            return self._get_income_statement(ticker)
+        
+        annual_reports = data.get('annualReports', [])
+        if not annual_reports:
+            return pd.DataFrame()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(annual_reports)
+        df.set_index('fiscalDateEnding', inplace=True)
+        df.index = pd.to_datetime(df.index)
+        
+        # Convert numeric columns
+        numeric_cols = ['totalRevenue', 'netIncome', 'grossProfit', 'operatingIncome']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+    
+    def _get_balance_sheet(self, ticker: str) -> pd.DataFrame:
+        """Get balance sheet from Alpha Vantage."""
+        params = {
+            'function': 'BALANCE_SHEET',
+            'symbol': ticker,
+            'apikey': self.api_key
+        }
+        
+        response = requests.get(self.base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'Error Message' in data:
+            logger.warning("Could not fetch balance sheet", error=data['Error Message'])
+            return pd.DataFrame()
+        
+        if 'Note' in data:
+            time.sleep(12)
+            return self._get_balance_sheet(ticker)
+        
+        annual_reports = data.get('annualReports', [])
+        if not annual_reports:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(annual_reports)
+        df.set_index('fiscalDateEnding', inplace=True)
+        df.index = pd.to_datetime(df.index)
+        
+        # Convert numeric columns
+        numeric_cols = ['totalAssets', 'totalLiabilities', 'totalShareholderEquity']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+    
+    def _calculate_metrics_from_overview(self, overview: Dict) -> FinancialMetrics:
+        """Calculate standardized financial metrics from Alpha Vantage overview."""
+        
+        def safe_float(value):
+            """Safely convert string to float, return None if invalid."""
+            if value is None or value == 'None' or value == '-':
+                return None
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
         
         metrics = FinancialMetrics(
-            ticker=info.get('symbol', ''),
-            company_name=info.get('longName', ''),
-            market_cap=info.get('marketCap'),
-            pe_ratio=info.get('trailingPE'),
-            forward_pe=info.get('forwardPE'),
-            peg_ratio=info.get('pegRatio'),
-            price_to_book=info.get('priceToBook'),
-            debt_to_equity=info.get('debtToEquity'),
-            roe=info.get('returnOnEquity'),
-            roa=info.get('returnOnAssets'),
-            profit_margin=info.get('profitMargins'),
-            beta=info.get('beta'),
-            dividend_yield=info.get('dividendYield')
+            ticker=overview.get('Symbol', ''),
+            company_name=overview.get('Name', ''),
+            market_cap=safe_float(overview.get('MarketCapitalization')),
+            pe_ratio=safe_float(overview.get('PERatio')),
+            forward_pe=safe_float(overview.get('ForwardPE')),
+            peg_ratio=safe_float(overview.get('PEGRatio')),
+            price_to_book=safe_float(overview.get('PriceToBookRatio')),
+            debt_to_equity=safe_float(overview.get('DebtToEquityRatio')),
+            roe=safe_float(overview.get('ReturnOnEquityTTM')),
+            roa=safe_float(overview.get('ReturnOnAssetsTTM')),
+            profit_margin=safe_float(overview.get('ProfitMargin')),
+            revenue_growth=safe_float(overview.get('QuarterlyRevenueGrowthYOY')),
+            earnings_growth=safe_float(overview.get('QuarterlyEarningsGrowthYOY')),
+            beta=safe_float(overview.get('Beta')),
+            dividend_yield=safe_float(overview.get('DividendYield'))
         )
-        
-        # Calculate additional metrics from statements
-        if not financials.empty and not balance_sheet.empty:
-            try:
-                # Revenue growth (YoY)
-                if 'Total Revenue' in financials.index:
-                    revenues = financials.loc['Total Revenue']
-                    if len(revenues) >= 2:
-                        metrics.revenue_growth = (revenues.iloc[0] - revenues.iloc[1]) / abs(revenues.iloc[1])
-                
-                # Free cash flow
-                if not cash_flow.empty and 'Free Cash Flow' in cash_flow.index:
-                    metrics.free_cash_flow = cash_flow.loc['Free Cash Flow'].iloc[0]
-                    
-            except Exception as e:
-                logger.warning("Error calculating additional metrics", error=str(e))
         
         return metrics
     
@@ -138,8 +286,9 @@ class FinancialDataCollector:
         for ticker in tickers:
             try:
                 data = self.get_company_data(ticker)
-                metrics = data['metrics'].dict()
+                metrics = data['metrics'].model_dump()
                 metrics_list.append(metrics)
+                time.sleep(12)  # Rate limiting for Alpha Vantage
             except Exception as e:
                 logger.error("Error fetching peer data", ticker=ticker, error=str(e))
         
@@ -155,7 +304,7 @@ class FinancialDataCollector:
     
     def get_historical_fundamentals(self, ticker: str, years: int = 5) -> pd.DataFrame:
         """
-        Get historical fundamental data over multiple years.
+        Get historical fundamental data over multiple years using Alpha Vantage.
         
         Args:
             ticker: Stock ticker symbol
@@ -164,30 +313,32 @@ class FinancialDataCollector:
         Returns:
             DataFrame with historical fundamentals
         """
-        stock = yf.Ticker(ticker)
-        
-        # Get annual financials
-        financials = stock.financials.T  # Transpose to have years as rows
-        balance_sheet = stock.balance_sheet.T
-        cash_flow = stock.cashflow.T
-        
-        # Combine relevant metrics
-        historical_data = pd.DataFrame(index=financials.index)
-        
-        if 'Total Revenue' in financials.columns:
-            historical_data['Revenue'] = financials['Total Revenue']
-        if 'Net Income' in financials.columns:
-            historical_data['Net Income'] = financials['Net Income']
-        if 'Total Assets' in balance_sheet.columns:
-            historical_data['Total Assets'] = balance_sheet['Total Assets']
-        if 'Total Debt' in balance_sheet.columns:
-            historical_data['Total Debt'] = balance_sheet['Total Debt']
-        if 'Free Cash Flow' in cash_flow.columns:
-            historical_data['Free Cash Flow'] = cash_flow['Free Cash Flow']
-        
-        # Calculate growth rates
-        for col in ['Revenue', 'Net Income']:
-            if col in historical_data.columns:
-                historical_data[f'{col} Growth'] = historical_data[col].pct_change()
-        
-        return historical_data.head(years)
+        try:
+            # Get income statement and balance sheet
+            income_statement = self._get_income_statement(ticker)
+            time.sleep(12)  # Rate limiting
+            balance_sheet = self._get_balance_sheet(ticker)
+            
+            # Combine relevant metrics
+            historical_data = pd.DataFrame()
+            
+            if not income_statement.empty:
+                historical_data['Revenue'] = income_statement.get('totalRevenue')
+                historical_data['Net Income'] = income_statement.get('netIncome')
+                historical_data['Gross Profit'] = income_statement.get('grossProfit')
+            
+            if not balance_sheet.empty:
+                historical_data['Total Assets'] = balance_sheet.get('totalAssets')
+                historical_data['Total Liabilities'] = balance_sheet.get('totalLiabilities')
+                historical_data['Shareholder Equity'] = balance_sheet.get('totalShareholderEquity')
+            
+            # Calculate growth rates
+            for col in ['Revenue', 'Net Income']:
+                if col in historical_data.columns:
+                    historical_data[f'{col} Growth'] = historical_data[col].pct_change()
+            
+            return historical_data.head(years)
+            
+        except Exception as e:
+            logger.error("Error fetching historical fundamentals", ticker=ticker, error=str(e))
+            return pd.DataFrame()
