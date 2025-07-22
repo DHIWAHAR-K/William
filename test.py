@@ -13,35 +13,35 @@ from datetime import datetime
 def test_single_company(ticker: str = "MSFT"):
     """Test analyzing a single company to conserve API calls."""
     
-    print("🚀 SINGLE COMPANY ANALYSIS")
+    print("SINGLE COMPANY ANALYSIS")
     print("=" * 60)
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Using Alpha Vantage API (25 calls/day limit)")
     print(f"Target Company: {ticker}\n")
     
     if not config.validate():
-        print("❌ Configuration invalid. Please check API keys in .env file.")
+        print("Configuration invalid. Please check API keys in .env file.")
         return False
     
     if not config.alpha_vantage_api_key:
-        print("❌ Alpha Vantage API key not found. Please set ALPHA_VANTAGE_API_KEY in .env")
+        print("Alpha Vantage API key not found. Please set ALPHA_VANTAGE_API_KEY in .env")
         return False
     
     try:
         # Initialize components
-        print("📦 Initializing components...")
+        print("Initializing components...")
         data_collector = FinancialDataCollector()
         llm_analyzer = CompanyLLMAnalyzer()
         
         # Get financial data (uses ~4 API calls)
-        print(f"\n📊 Fetching financial data for {ticker}...")
-        print("   ⏳ This will use ~4 Alpha Vantage API calls")
+        print(f"\n Fetching financial data for {ticker}...")
+        print("This will use ~4 Alpha Vantage API calls")
         financial_data = data_collector.get_company_data(ticker)
-        print(f"   ✅ Retrieved financial data successfully")
+        print(f"Retrieved financial data successfully")
         
         # Display company info
         info = financial_data['info']
-        print(f"\n🏢 COMPANY OVERVIEW")
+        print(f"\n COMPANY OVERVIEW")
         print(f"{'─' * 40}")
         print(f"Name: {info.get('Name', 'N/A')}")
         print(f"Symbol: {info.get('Symbol', 'N/A')}")
@@ -51,12 +51,12 @@ def test_single_company(ticker: str = "MSFT"):
         print(f"Description: {info.get('Description', 'N/A')[:200]}...")
         
         # Get LLM analysis
-        print(f"\n🤖 Performing LLM analysis...")
+        print(f"\n Performing LLM analysis...")
         llm_analysis = llm_analyzer.analyze_with_verification(ticker, financial_data)
-        print(f"   ✅ LLM analysis completed")
+        print(f"LLM analysis completed")
         
         # Display financial metrics
-        print(f"\n💰 KEY FINANCIAL METRICS")
+        print(f"\n KEY FINANCIAL METRICS")
         print(f"{'─' * 40}")
         metrics = financial_data['metrics']
         print(f"Market Cap: ${metrics.market_cap:,.0f}" if metrics.market_cap else "Market Cap: N/A")
@@ -71,23 +71,23 @@ def test_single_company(ticker: str = "MSFT"):
         print(f"Dividend Yield: {metrics.dividend_yield:.2%}" if metrics.dividend_yield else "Dividend Yield: N/A")
         
         # Display LLM insights
-        print(f"\n🎯 AI-POWERED INSIGHTS")
+        print(f"\n AI-POWERED INSIGHTS")
         print(f"{'─' * 40}")
         print(f"Confidence Score: {llm_analysis.confidence_score:.2f}")
         
-        print(f"\n📈 Growth Drivers:")
+        print(f"\n Growth Drivers:")
         for i, driver in enumerate(llm_analysis.growth_drivers[:5], 1):
             print(f"   {i}. {driver}")
         
-        print(f"\n⚠️ Key Risks:")
+        print(f"\n Key Risks:")
         for i, risk in enumerate(llm_analysis.risks[:5], 1):
             print(f"   {i}. {risk}")
         
-        print(f"\n🏆 Competitive Advantages:")
+        print(f"\n Competitive Advantages:")
         for i, advantage in enumerate(llm_analysis.competitive_advantages[:5], 1):
             print(f"   {i}. {advantage}")
         
-        print(f"\n📍 Market Position:")
+        print(f"\n Market Position:")
         print(f"   {llm_analysis.market_position}")
         
         # Save detailed results
@@ -113,10 +113,10 @@ def test_single_company(ticker: str = "MSFT"):
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=2, default=str)
         
-        print(f"\n💾 Full analysis saved to: {output_file}")
+        print(f"\n Full analysis saved to: {output_file}")
         
         # Show API usage estimate
-        print(f"\n📊 API USAGE SUMMARY")
+        print(f"\n API USAGE SUMMARY")
         print(f"{'─' * 40}")
         print(f"Estimated API calls used: ~4")
         print(f"Remaining daily calls: ~{25 - 4}")
@@ -125,7 +125,7 @@ def test_single_company(ticker: str = "MSFT"):
         return True
         
     except Exception as e:
-        print(f"\n❌ Analysis failed: {str(e)}")
+        print(f"\n Analysis failed: {str(e)}")
         import traceback
         traceback.print_exc()
         return False
@@ -139,6 +139,6 @@ if __name__ == "__main__":
     success = test_single_company(ticker)
     
     if success:
-        print(f"\n✅ Analysis completed successfully!")
+        print(f"\n Analysis completed successfully!")
     else:
-        print(f"\n❌ Analysis failed. Check error messages above.")
+        print(f"\n Analysis failed. Check error messages above.")
